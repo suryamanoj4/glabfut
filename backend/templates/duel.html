@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>glabfut duel — {{ username1 }} vs {{ username2 }}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <header class="card-header">
+            <a href="/" class="back-link">&larr; glabfut</a>
+            <div class="header-controls">
+                <input type="text" id="leftInput" value="{{ username1 }}" placeholder="Player one">
+                <input type="text" id="rightInput" value="{{ username2 }}" placeholder="Player two">
+                <button id="duelBtn" type="button">Run duel</button>
+            </div>
+        </header>
+
+        <div class="settings-panel" id="settingsPanel">
+            <div class="settings-field">
+                <label for="gitlabUrl">GitLab URL</label>
+                <input type="url" id="gitlabUrl" placeholder="https://gitlab.com" value="https://gitlab.com">
+            </div>
+            <div class="settings-field">
+                <label for="gitlabToken">Personal Access Token</label>
+                <input type="password" id="gitlabToken" placeholder="glpat-...">
+            </div>
+        </div>
+
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <p>Running duel...</p>
+        </div>
+
+        <div id="error" class="error" style="display:none"></div>
+
+        <div id="duelContainer" class="duel-layout" style="display:none">
+            <section class="sidebar-section duel-player">
+                <h3 id="player1Name"></h3>
+                <p class="archetype" id="player1Overall"></p>
+                <div class="stat-bars" id="player1Stats"></div>
+            </section>
+            <section class="sidebar-section duel-center">
+                <h3>Duel Result</h3>
+                <p class="archetype" id="duelVerdict"></p>
+                <p class="archetype-blurb" id="duelScore"></p>
+                <div class="metrics" id="duelStats"></div>
+            </section>
+            <section class="sidebar-section duel-player">
+                <h3 id="player2Name"></h3>
+                <p class="archetype" id="player2Overall"></p>
+                <div class="stat-bars" id="player2Stats"></div>
+            </section>
+        </div>
+    </div>
+
+    <script>
+        function loadSettings() {
+            try {
+                document.getElementById('gitlabUrl').value = localStorage.getItem('glabfut_gitlab_url') || 'https://gitlab.com';
+                document.getElementById('gitlabToken').value = localStorage.getItem('glabfut_gitlab_token') || '';
+            } catch (e) {}
+        }
+
+        function saveSettings() {
+            try {
+                localStorage.setItem('glabfut_gitlab_url', document.getElementById('gitlabUrl').value.trim());
+                localStorage.setItem('glabfut_gitlab_token', document.getElementById('gitlabToken').value.trim());
+            } catch (e) {}
+        }
+
+        function renderStats(el, data) {
+            const keys = ['pac', 'sho', 'pas', 'dri', 'def', 'phy'];
+            el.innerHTML = keys.map(function(key) {
+                return '<div class="stat-bar-row"><span class="bar-label">' + key.toUpperCase() + '</span><div class="bar-track"><div class="bar-fill ' + key + '" style="width:' + data.stats[key] + '%"></div></div><span class="bar-val">' + data.stats[key] + '</span></div>';
+            }).join('');
+        }
+
+        async function loadDuel() {
+            saveSettings();
+            const left = document.getElementById('leftInput').value.trim();
+            const right = document.getElementById('rightInput').value.trim();
+            const token = document.getElementById('gitlabToken').value.trim();
+            const url = document.getElementById('gitlabUrl').value.trim() || 'https://gitlab.com';
+            if (!left || !right || !token) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent = 'Enter both usernames and a GitLab token.';
+                return;
+            }
+            document.getElementById('error').style.display = 'none';
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('duelContainer').style.display = 'none';
+            try {
+                const res = await fetch('/duel/' + encodeURIComponent(left) + '/' + encodeURIComponent(right), {
+                    headers: {
+                        'X-GitLab-URL': url,
+                        'X-GitLab-Token': token
+                    }
+                });
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail || 'Failed to run duel');
+                }
+                const data = await res.json();
+                document.getElementById('player1Name').textContent = data.player1.name || data.player1.username;
+                document.getElementById('player1Overall').textContent = 'OVR ' + data.player1.overall;
+                renderStats(document.getElementById('player1Stats'), data.player1);
+
+                document.getElementById('player2Name').textContent = data.player2.name || data.player2.username;
+                document.getElementById('player2Overall').textContent = 'OVR ' + data.player2.overall;
+                renderStats(document.getElementById('player2Stats'), data.player2);
+
+                document.getElementById('duelVerdict').textContent = data.verdict === 'draw'
+                    ? 'Draw'
+                    : (data.verdict === 'player1' ? data.player1.username : data.player2.username) + ' wins';
+                document.getElementById('duelScore').textContent = 'Score ' + data.score;
+
+                document.getElementById('duelStats').innerHTML = Object.entries(data.stat_winners).map(function(entry) {
+                    return '<div class="metric"><span class="metric-label">' + entry[0].toUpperCase() + '</span><span class="metric-val">' + entry[1] + '</span></div>';
+                }).join('');
+
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('duelContainer').style.display = 'grid';
+            } catch (err) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent = err.message;
+            }
+        }
+
+        document.getElementById('duelBtn').addEventListener('click', loadDuel);
+        loadSettings();
+        loadDuel();
+    </script>
+</body>
+</html>
