@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>glabfut — {{ username }}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <header class="card-header">
+            <a href="/" class="back-link">&larr; glabfut</a>
+            <div class="header-controls">
+                <input type="text" id="searchInput" placeholder="Search another user..." value="{{ username }}">
+                <button id="exportBtn" onclick="exportCard()" title="Save as PNG">Export PNG</button>
+                <button id="settingsBtn" class="settings-btn" title="GitLab settings">&#9881;</button>
+            </div>
+        </header>
+
+        <div class="settings-panel" id="settingsPanel" style="display:none">
+            <div class="settings-field">
+                <label for="gitlabUrl">GitLab URL</label>
+                <input type="url" id="gitlabUrl" placeholder="https://gitlab.com" value="https://gitlab.com">
+            </div>
+            <div class="settings-field">
+                <label for="gitlabToken">Personal Access Token</label>
+                <input type="password" id="gitlabToken" placeholder="glpat-...">
+                <span class="settings-hint">Requires <code>read_api</code> scope</span>
+            </div>
+            <div class="settings-status" id="settingsStatus"></div>
+        </div>
+
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <p>Scouting <strong>{{ username }}</strong>...</p>
+        </div>
+
+        <div id="loginPrompt" class="login-prompt" style="display:none">
+            <h3>GitLab credentials required</h3>
+            <p>This app needs a GitLab personal access token to read profile data.</p>
+            <p class="settings-hint">Open <strong>GitLab settings &#9881;</strong> in the header and enter your instance URL and token.</p>
+        </div>
+
+        <div id="error" class="error" style="display:none"></div>
+
+        <div id="cardContainer" style="display:none">
+            <div class="card-layout">
+                <div id="playerCard" class="player-card">
+                    <div class="card-inner" id="cardInner">
+                        <div class="card-badge" id="cardBadge"></div>
+                        <div class="card-position" id="cardPosition"></div>
+                        <div class="card-ovr" id="cardOvr"></div>
+                        <div class="card-avatar" id="cardAvatar"></div>
+                        <div class="card-name" id="cardName"></div>
+                        <div class="card-language" id="cardLanguage"></div>
+                        <div class="card-stats" id="cardStats"></div>
+                        <div class="card-tier" id="cardTier"></div>
+                    </div>
+                </div>
+                <div class="card-sidebar" id="cardSidebar">
+                    <div class="sidebar-section">
+                        <h3>{{ username }}</h3>
+                        <p class="bio" id="bioDisplay"></p>
+                        <p class="location" id="locationDisplay"></p>
+                    </div>
+                    <div class="sidebar-section">
+                        <h4>Archetype</h4>
+                        <p class="archetype" id="archetypeDisplay"></p>
+                        <p class="archetype-blurb" id="archetypeBlurb"></p>
+                    </div>
+                    <div class="sidebar-section">
+                        <h4>Metrics</h4>
+                        <div class="metrics" id="metricsDisplay"></div>
+                    </div>
+                    <div class="sidebar-section">
+                        <h4>Playstyles</h4>
+                        <div class="playstyles" id="playstylesDisplay"></div>
+                    </div>
+                    <div class="sidebar-section">
+                        <h4>Stats</h4>
+                        <div class="stat-bars" id="statBars"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const TIER_COLORS = {
+            bronze: '#8B6914', silver: '#9BA4B5', gold: '#E6B422',
+            totw: '#E03E52', toty: '#3B7AFF', icon: '#F3D688'
+        };
+        const TIER_BG = {
+            bronze: 'linear-gradient(135deg, #2A1A0C, #5C3A1A)',
+            silver: 'linear-gradient(135deg, #2B3135, #5A6670)',
+            gold: 'linear-gradient(135deg, #3A2806, #8B6914)',
+            totw: 'linear-gradient(135deg, #4A0A14, #E03E52)',
+            toty: 'linear-gradient(135deg, #10254F, #3B7AFF)',
+            icon: 'linear-gradient(135deg, #2A1A45, #F3D688)'
+        };
+
+        // --- Settings persistence ---
+        function loadSettings() {
+            try {
+                const url = localStorage.getItem('glabfut_gitlab_url') || 'https://gitlab.com';
+                const token = localStorage.getItem('glabfut_gitlab_token') || '';
+                document.getElementById('gitlabUrl').value = url;
+                document.getElementById('gitlabToken').value = token;
+            } catch(e) {}
+        }
+
+        function getSettings() {
+            return {
+                url: document.getElementById('gitlabUrl').value.trim() || 'https://gitlab.com',
+                token: document.getElementById('gitlabToken').value.trim() || '',
+            };
+        }
+
+        function saveSettings() {
+            try {
+                localStorage.setItem('glabfut_gitlab_url', document.getElementById('gitlabUrl').value.trim());
+                localStorage.setItem('glabfut_gitlab_token', document.getElementById('gitlabToken').value.trim());
+            } catch(e) {}
+            document.getElementById('settingsStatus').textContent = 'Saved';
+            document.getElementById('settingsStatus').className = 'settings-status saved';
+        }
+
+        // Settings toggle
+        document.getElementById('settingsBtn').addEventListener('click', function() {
+            const panel = document.getElementById('settingsPanel');
+            panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+            if (panel.style.display === 'block') loadSettings();
+        });
+
+        document.getElementById('gitlabUrl').addEventListener('change', saveSettings);
+        document.getElementById('gitlabToken').addEventListener('change', saveSettings);
+
+        // --- API call ---
+        async function loadCard() {
+            const username = '{{ username }}';
+            const settings = getSettings();
+
+            if (!settings.token) {
+                const token = '{{ gitlab_token }}';
+                if (!token) {
+                    document.getElementById('loading').style.display = 'none';
+                    document.getElementById('loginPrompt').style.display = 'block';
+                    return;
+                }
+                settings.token = token;
+            }
+
+            try {
+                const res = await fetch('/card/' + encodeURIComponent(username), {
+                    headers: {
+                        'X-GitLab-URL': settings.url,
+                        'X-GitLab-Token': settings.token,
+                    }
+                });
+                if (res.status === 401) {
+                    document.getElementById('loading').style.display = 'none';
+                    document.getElementById('loginPrompt').style.display = 'block';
+                    return;
+                }
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail || 'Failed to load card');
+                }
+                const data = await res.json();
+                renderCard(data);
+            } catch (err) {
+                document.getElementById('loading').style.display = 'none';
+                const errorEl = document.getElementById('error');
+                errorEl.style.display = 'block';
+                errorEl.textContent = err.message;
+            }
+        }
+
+        // --- Render card ---
+        function renderCard(data) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('cardContainer').style.display = 'block';
+
+            const finish = data.finish;
+            const cardInner = document.getElementById('cardInner');
+            cardInner.style.background = TIER_BG[finish] || TIER_BG.bronze;
+            cardInner.style.borderColor = TIER_COLORS[finish] || TIER_COLORS.bronze;
+
+            document.getElementById('cardBadge').textContent = data.tier;
+            document.getElementById('cardBadge').style.color = TIER_COLORS[finish];
+            document.getElementById('cardPosition').textContent = data.position;
+            document.getElementById('cardOvr').textContent = data.overall;
+
+            const avatarEl = document.getElementById('cardAvatar');
+            if (data.avatar_url) {
+                avatarEl.innerHTML = '<img src="' + data.avatar_url + '" alt="' + data.username + '" onerror="this.parentElement.textContent=\'' + data.username[0].toUpperCase() + '\'">';
+            } else {
+                avatarEl.textContent = data.username[0].toUpperCase();
+            }
+
+            document.getElementById('cardName').textContent = data.name || data.username;
+
+            const langEl = document.getElementById('cardLanguage');
+            if (data.top_language) {
+                langEl.textContent = data.top_language;
+                langEl.style.display = 'block';
+            } else {
+                langEl.style.display = 'none';
+            }
+
+            document.getElementById('cardTier').textContent = data.tier;
+
+            const statKeys = ['pac', 'sho', 'pas', 'dri', 'def', 'phy'];
+            const statsContainer = document.getElementById('cardStats');
+            statsContainer.innerHTML = statKeys.map(function(key) {
+                return '<div class="card-stat"><span class="stat-key">' + key.toUpperCase() + '</span><span class="stat-val">' + data.stats[key] + '</span></div>';
+            }).join('');
+
+            document.getElementById('bioDisplay').textContent = data.bio || '';
+            document.getElementById('locationDisplay').textContent = data.location || '';
+            document.getElementById('archetypeDisplay').textContent = data.archetype;
+            document.getElementById('archetypeBlurb').textContent = data.archetype_blurb;
+
+            const metricLabels = {
+                recent_commits: 'Commits (1y)', merged_mrs: 'Merged MRs',
+                followers: 'Followers', review_comments: 'Review comments',
+                languages: 'Languages', issues: 'Issues',
+                reviews: 'Reviews', lifetime_commits: 'Lifetime commits',
+                active_years: 'Active years', projects: 'Projects'
+            };
+            const metricsEl = document.getElementById('metricsDisplay');
+            metricsEl.innerHTML = Object.entries(data.metrics).map(function(entry) {
+                return '<div class="metric"><span class="metric-label">' + (metricLabels[entry[0]] || entry[0]) + '</span><span class="metric-val">' + entry[1] + '</span></div>';
+            }).join('');
+
+            const psEl = document.getElementById('playstylesDisplay');
+            if (data.playstyles && data.playstyles.length) {
+                psEl.innerHTML = data.playstyles.map(function(ps) {
+                    return '<span class="playstyle-tag">' + ps + '</span>';
+                }).join('');
+            } else {
+                psEl.innerHTML = '<span class="playstyle-tag muted">None detected</span>';
+            }
+
+            const barsEl = document.getElementById('statBars');
+            barsEl.innerHTML = statKeys.map(function(key) {
+                var val = data.stats[key];
+                return '<div class="stat-bar-row"><span class="bar-label">' + key.toUpperCase() + '</span><div class="bar-track"><div class="bar-fill ' + key + '" style="width:' + val + '%"></div></div><span class="bar-val">' + val + '</span></div>';
+            }).join('');
+        }
+
+        // --- Export ---
+        async function exportCard() {
+            const card = document.getElementById('playerCard');
+            try {
+                const mod = await import('https://cdn.jsdelivr.net/npm/html-to-image@1.11.13/+esm');
+                const blob = await mod.toPng(card, { quality: 1, pixelRatio: 2 });
+                const a = document.createElement('a');
+                a.download = '{{ username }}-glabfut.png';
+                a.href = blob;
+                a.click();
+            } catch (e) {
+                alert('Export not available in this browser. Try taking a screenshot.');
+            }
+        }
+
+        // --- Search ---
+        document.getElementById('searchInput').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                var val = this.value.trim();
+                if (val) window.location.href = '/card/' + encodeURIComponent(val) + '/page';
+            }
+        });
+
+        loadSettings();
+        loadCard();
+    </script>
+</body>
+</html>

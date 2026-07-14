@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>glabfut — Your GitLab, rated out of 99</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="hero">
+        <div class="hero-content">
+            <h1 class="logo">glab<span class="accent">fut</span></h1>
+            <p class="tagline">Your GitLab profile, turned into a FUT-style player card</p>
+            <form class="search-form" id="searchForm">
+                <input
+                    type="text"
+                    id="usernameInput"
+                    placeholder="Enter GitLab username..."
+                    required
+                    autofocus
+                >
+                <button type="submit">Scout</button>
+            </form>
+            <button class="settings-toggle" id="settingsToggle" type="button">GitLab settings &#x25BC;</button>
+            <div class="settings-panel" id="settingsPanel" style="display:none">
+                <div class="settings-field">
+                    <label for="gitlabUrl">GitLab URL</label>
+                    <input type="url" id="gitlabUrl" placeholder="https://gitlab.com" value="https://gitlab.com">
+                </div>
+                <div class="settings-field">
+                    <label for="gitlabToken">Personal Access Token</label>
+                    <input type="password" id="gitlabToken" placeholder="glpat-...">
+                    <span class="settings-hint">Requires <code>read_api</code> scope. <a href="https://docs.gitlab.com/ee/user/profile/personal_access_tokens.html" target="_blank">How to create one</a></span>
+                </div>
+            </div>
+            <p class="hint">Works with gitlab.com and self-hosted instances</p>
+        </div>
+    </div>
+
+    <div class="examples">
+        <h2>Example cards</h2>
+        <div class="examples-grid">
+            <a href="/card/torvalds/page" class="example-card">
+                <span class="name">torvalds</span>
+                <span class="arrow">&rarr;</span>
+            </a>
+            <a href="/card/ranjithraj/page" class="example-card">
+                <span class="name">ranjithraj</span>
+                <span class="arrow">&rarr;</span>
+            </a>
+            <a href="/card/iamandrewluca/page" class="example-card">
+                <span class="name">iamandrewluca</span>
+                <span class="arrow">&rarr;</span>
+            </a>
+        </div>
+    </div>
+
+    <div class="stats-preview">
+        <h2>How the scouting works</h2>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <span class="stat-label pac">PAC</span>
+                <span class="stat-desc">Pace</span>
+                <span class="stat-source">Commits last year</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label sho">SHO</span>
+                <span class="stat-desc">Shooting</span>
+                <span class="stat-source">Merged MRs + ext. commits</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label pas">PAS</span>
+                <span class="stat-desc">Passing</span>
+                <span class="stat-source">Review comments + followers</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label dri">DRI</span>
+                <span class="stat-desc">Dribbling</span>
+                <span class="stat-source">Languages &times; projects</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label def">DEF</span>
+                <span class="stat-desc">Defending</span>
+                <span class="stat-source">Reviews + issues</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label phy">PHY</span>
+                <span class="stat-desc">Physical</span>
+                <span class="stat-source">Lifetime commits + age</span>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p>Built with FastAPI + glabflow &middot; <a href="https://gitlab.com/ranjithraj/glabflow">glabflow</a></p>
+    </footer>
+
+    <script>
+        // Persist settings across page navigations
+        function loadSettings() {
+            try {
+                const url = localStorage.getItem('glabfut_gitlab_url') || 'https://gitlab.com';
+                const token = localStorage.getItem('glabfut_gitlab_token') || '';
+                document.getElementById('gitlabUrl').value = url;
+                document.getElementById('gitlabToken').value = token;
+            } catch(e) {}
+        }
+
+        function saveSettings() {
+            try {
+                localStorage.setItem('glabfut_gitlab_url', document.getElementById('gitlabUrl').value.trim());
+                localStorage.setItem('glabfut_gitlab_token', document.getElementById('gitlabToken').value.trim());
+            } catch(e) {}
+        }
+
+        // Settings toggle
+        document.getElementById('settingsToggle').addEventListener('click', function() {
+            const panel = document.getElementById('settingsPanel');
+            const isOpen = panel.style.display !== 'none';
+            panel.style.display = isOpen ? 'none' : 'block';
+            this.textContent = isOpen ? 'GitLab settings \u25BC' : 'GitLab settings \u25B2';
+            if (!isOpen) loadSettings();
+        });
+
+        // Save on change
+        document.getElementById('gitlabUrl').addEventListener('change', saveSettings);
+        document.getElementById('gitlabToken').addEventListener('change', saveSettings);
+
+        // Search: pass settings via headers
+        document.getElementById('searchForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const username = document.getElementById('usernameInput').value.trim();
+            if (username) {
+                saveSettings();
+                window.location.href = '/card/' + encodeURIComponent(username) + '/page';
+            }
+        });
+
+        document.getElementById('usernameInput').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                document.getElementById('searchForm').dispatchEvent(new Event('submit'));
+            }
+        });
+
+        // Load saved settings on page load
+        loadSettings();
+    </script>
+</body>
+</html>
