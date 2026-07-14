@@ -489,7 +489,7 @@ class GitLabProfileClient:
         return results
 
     async def _fetch_user_issues_rest(self, username: str, role: str) -> list[dict[str, Any]]:
-        params = {"state": "all", "scope": "all", "order_by": "created_at"}
+        params = {"state": "all"}
         if role == "authored":
             params["author_username"] = username
         else:
