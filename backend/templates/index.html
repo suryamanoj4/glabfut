@@ -54,6 +54,16 @@
                 <span class="arrow">&rarr;</span>
             </a>
         </div>
+        <div class="examples-grid" style="margin-top:1rem">
+            <a href="/duel/torvalds/ranjithraj/page" class="example-card">
+                <span class="name">Duel Mode</span>
+                <span class="arrow">&rarr;</span>
+            </a>
+            <a href="/team/lineup/page" class="example-card">
+                <span class="name">Starting XI</span>
+                <span class="arrow">&rarr;</span>
+            </a>
+        </div>
     </div>
 
     <div class="stats-preview">
@@ -107,9 +117,17 @@
             } catch(e) {}
         }
 
+        function normalizeUrl(url) {
+            url = url.trim();
+            if (url && !url.startsWith('http://') && !url.startsWith('https://')) {
+                url = 'https://' + url;
+            }
+            return url;
+        }
+
         function saveSettings() {
             try {
-                localStorage.setItem('glabfut_gitlab_url', document.getElementById('gitlabUrl').value.trim());
+                localStorage.setItem('glabfut_gitlab_url', normalizeUrl(document.getElementById('gitlabUrl').value));
                 localStorage.setItem('glabfut_gitlab_token', document.getElementById('gitlabToken').value.trim());
             } catch(e) {}
         }

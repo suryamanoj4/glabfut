@@ -78,19 +78,53 @@ def _extract_languages(projects: list[dict]) -> dict[str, float]:
     return lang_count
 
 
-def _count_recent_events(events: list[dict], days: int = 365) -> int:
-    cutoff = datetime.now(timezone.utc).timestamp() - days * 86400
-    count = 0
-    for ev in events:
-        created = _field(ev, "createdAt", "created_at")
-        if created:
-            try:
-                ts = datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp()
-                if ts >= cutoff:
-                    count += 1
-            except (ValueError, AttributeError):
-                pass
-    return count
+def _mr_role(mr: dict[str, Any]) -> str:
+    return str(mr.get("role") or "").lower()
+
+
+def _issue_role(issue: dict[str, Any]) -> str:
+    return str(issue.get("role") or "").lower()
+
+
+def _is_reviewer_for_user(mr: dict[str, Any], username: str, profile: dict[str, Any] | None) -> bool:
+    reviewers = _list_nodes(mr, "reviewers")
+    targets = {
+        username.lower(),
+        str((profile or {}).get("username") or "").lower(),
+        str((profile or {}).get("name") or "").lower(),
+    }
+    targets.discard("")
+    for reviewer in reviewers:
+        if not isinstance(reviewer, dict):
+            continue
+        values = {
+            str(reviewer.get("username") or "").lower(),
+            str(reviewer.get("name") or "").lower(),
+        }
+        if targets & values:
+            return True
+    return False
+
+
+def _note_authored_by_user(note: dict[str, Any], username: str, profile: dict[str, Any] | None) -> bool:
+    author = note.get("author") if isinstance(note, dict) else None
+    if not isinstance(author, dict):
+        return False
+    targets = {
+        username.lower(),
+        str((profile or {}).get("username") or "").lower(),
+        str((profile or {}).get("name") or "").lower(),
+        str((profile or {}).get("publicEmail") or "").lower(),
+        str((profile or {}).get("email") or "").lower(),
+    }
+    targets.discard("")
+    values = {
+        str(author.get("username") or "").lower(),
+        str(author.get("name") or "").lower(),
+        str(author.get("email") or "").lower(),
+    }
+    values.discard("")
+    return bool(targets & values)
 
 
 def profile_to_signals(
@@ -100,6 +134,7 @@ def profile_to_signals(
     projects: list[dict],
     mrs: list[dict],
     issues: list[dict],
+    commit_stats: dict[str, int] | None = None,
 ) -> Signals | None:
     if not profile:
         return None
@@ -112,35 +147,26 @@ def profile_to_signals(
 
     account_age_years = _years_since(_field(profile, "createdAt", "created_at"))
 
-    recent_commits = _count_recent_events(events, 365)
-    lifetime_commits = len([e for e in events if e.get("action") == "pushed"])
+    commit_stats = commit_stats or {}
+    recent_commits = _safe_int(commit_stats.get("recent_commits"))
+    lifetime_commits = _safe_int(commit_stats.get("lifetime_commits")) or recent_commits
 
     total_mrs = len(mrs)
     merged_mrs = len([m for m in mrs if m.get("state") == "merged"])
 
-    owned_paths = set()
-    for p in projects:
-        fp = _field(p, "fullPath", "path_with_namespace") or _field(p, "pathWithNamespace") or ""
-        if fp:
-            owned_paths.add(fp)
+    commits_to_others = _safe_int(commit_stats.get("commits_to_others"))
 
-    commits_to_others = 0
-    for ev in events:
-        proj = ev.get("project", {}) or {}
-        fp = _field(proj, "fullPath", "path_with_namespace") or ""
-        if fp and fp not in owned_paths and ev.get("action") == "pushed":
-            commits_to_others += 1
-
-    reviews_given = 0
+    review_mrs = [mr for mr in mrs if _is_reviewer_for_user(mr, username, profile)]
+    if not review_mrs:
+        review_mrs = [mr for mr in mrs if "assigned" in _mr_role(mr) and "authored" not in _mr_role(mr)]
+    reviews_given = len(review_mrs)
     review_comments = 0
-    for mr in mrs:
+    for mr in review_mrs:
         notes = _list_nodes(mr, "notes") if isinstance(mr.get("notes"), dict) else mr.get("notes") or []
-        for note in notes:
-            if isinstance(note, dict) and note.get("system") is False:
-                review_comments += 1
-        reviewers = _list_nodes(mr, "reviewers")
-        if reviewers:
-            reviews_given += 1
+        if notes:
+            for note in notes:
+                if isinstance(note, dict) and note.get("system") is False and _note_authored_by_user(note, username, profile):
+                    review_comments += 1
 
     unique_projects = set()
     for ev in events:
@@ -177,7 +203,7 @@ def profile_to_signals(
         merged_mrs=merged_mrs,
         commits_to_others=commits_to_others,
         reviews_given=reviews_given,
-        issues_created=len(issues),
+        issues_created=len([issue for issue in issues if "authored" in _issue_role(issue)]),
         review_comments=review_comments,
         active_years=active_years,
         unique_projects_contributed=len(unique_projects),

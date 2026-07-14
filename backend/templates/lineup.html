@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>glabfut lineup</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <header class="card-header">
+            <a href="/" class="back-link">&larr; glabfut</a>
+            <div class="header-controls">
+                <button id="buildBtn" type="button">Build XI</button>
+            </div>
+        </header>
+
+        <div class="settings-panel">
+            <div class="settings-field">
+                <label for="gitlabUrl">GitLab URL</label>
+                <input type="url" id="gitlabUrl" value="https://gitlab.com">
+            </div>
+            <div class="settings-field">
+                <label for="gitlabToken">Personal Access Token</label>
+                <input type="password" id="gitlabToken" placeholder="glpat-...">
+            </div>
+            <div class="settings-field">
+                <label for="players">11 usernames, one per line</label>
+                <textarea id="players" class="lineup-textarea" placeholder="alice&#10;bob&#10;charlie"></textarea>
+            </div>
+        </div>
+
+        <div id="loading" class="loading" style="display:none">
+            <div class="spinner"></div>
+            <p>Building lineup...</p>
+        </div>
+        <div id="error" class="error" style="display:none"></div>
+
+        <div id="lineupContainer" style="display:none">
+            <div class="sidebar-section">
+                <h3 id="formationLabel"></h3>
+                <p class="archetype" id="chemistryLabel"></p>
+            </div>
+            <div class="lineup-grid" id="lineupGrid"></div>
+        </div>
+    </div>
+
+    <script>
+        function loadSettings() {
+            try {
+                document.getElementById('gitlabUrl').value = localStorage.getItem('glabfut_gitlab_url') || 'https://gitlab.com';
+                document.getElementById('gitlabToken').value = localStorage.getItem('glabfut_gitlab_token') || '';
+            } catch (e) {}
+        }
+
+        function normalizeUrl(url) {
+            url = url.trim();
+            if (url && !url.startsWith('http://') && !url.startsWith('https://')) {
+                url = 'https://' + url;
+            }
+            return url;
+        }
+
+        function saveSettings() {
+            try {
+                localStorage.setItem('glabfut_gitlab_url', normalizeUrl(document.getElementById('gitlabUrl').value));
+                localStorage.setItem('glabfut_gitlab_token', document.getElementById('gitlabToken').value.trim());
+            } catch (e) {}
+        }
+
+        async function buildLineup() {
+            saveSettings();
+            const token = document.getElementById('gitlabToken').value.trim();
+            const url = document.getElementById('gitlabUrl').value.trim() || 'https://gitlab.com';
+            const players = document.getElementById('players').value.split('\n').map(function(line) {
+                return line.trim();
+            }).filter(Boolean);
+            if (players.length !== 11 || !token) {
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent = 'Enter 11 usernames and a GitLab token.';
+                return;
+            }
+
+            document.getElementById('error').style.display = 'none';
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('lineupContainer').style.display = 'none';
+            try {
+                const res = await fetch('/team/lineup', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-GitLab-URL': url,
+                        'X-GitLab-Token': token
+                    },
+                    body: JSON.stringify({ players: players, gitlab_url: url })
+                });
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail || 'Failed to build lineup');
+                }
+                const data = await res.json();
+                document.getElementById('formationLabel').textContent = data.formation;
+                document.getElementById('chemistryLabel').textContent = 'Team chemistry ' + data.team_chemistry + '%';
+                document.getElementById('lineupGrid').innerHTML = data.players.map(function(player) {
+                    return '<div class="sidebar-section lineup-player"><h4>' + player.slot + '</h4><h3>' + (player.card.name || player.username) + '</h3><p class="archetype">OVR ' + player.card.overall + ' → ' + player.boosted_overall + '</p><p class="archetype-blurb">Chemistry links: ' + player.chemistry_links + '</p></div>';
+                }).join('');
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('lineupContainer').style.display = 'block';
+            } catch (err) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent = err.message;
+            }
+        }
+
+        document.getElementById('buildBtn').addEventListener('click', buildLineup);
+        loadSettings();
+    </script>
+</body>
+</html>
