@@ -244,8 +244,11 @@ def _q_user_issues(role: str) -> tuple[str, list[str]]:
 
 class GitLabProfileClient:
     def __init__(self, gitlab_url: str | None = None, token: str | None = None):
-        self._gitlab_url = gitlab_url or os.getenv("GITLAB_URL", "https://gitlab.com")
-        self._token = token or os.getenv("GITLAB_TOKEN") or ""
+        url = (gitlab_url or "https://gitlab.com").strip()
+        if url and not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        self._gitlab_url = url
+        self._token = (token or "").strip()
         self._client: Client | None = None
 
     async def _get_client(self) -> Client:

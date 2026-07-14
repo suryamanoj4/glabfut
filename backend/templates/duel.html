@@ -64,9 +64,17 @@
             } catch (e) {}
         }
 
+        function normalizeUrl(url) {
+            url = url.trim();
+            if (url && !url.startsWith('http://') && !url.startsWith('https://')) {
+                url = 'https://' + url;
+            }
+            return url;
+        }
+
         function saveSettings() {
             try {
-                localStorage.setItem('glabfut_gitlab_url', document.getElementById('gitlabUrl').value.trim());
+                localStorage.setItem('glabfut_gitlab_url', normalizeUrl(document.getElementById('gitlabUrl').value));
                 localStorage.setItem('glabfut_gitlab_token', document.getElementById('gitlabToken').value.trim());
             } catch (e) {}
         }

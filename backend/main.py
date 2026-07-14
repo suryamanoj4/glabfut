@@ -37,8 +37,10 @@ def _cache_key(username: str, gitlab_url: str, token: str) -> str:
 
 
 def _resolve_creds(gitlab_url: str | None, token: str | None) -> tuple[str, str]:
-    url = gitlab_url or os.getenv("GITLAB_URL", "https://gitlab.com")
-    tok = token or os.getenv("GITLAB_TOKEN", "")
+    url = (gitlab_url or "https://gitlab.com").strip()
+    if url and not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    tok = (token or "").strip()
     return url, tok
 
 
