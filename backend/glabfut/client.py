@@ -438,8 +438,8 @@ class GitLabProfileClient:
     async def _fetch_mr_notes(self, project_id: int | str | None, mr_iid: int | str | None) -> list[dict[str, Any]]:
         if not project_id or mr_iid is None:
             return []
-        notes = await self._rest_paginate(f"/projects/{project_id}/merge_requests/{mr_iid}/notes")
-        return [note for note in notes if isinstance(note, dict)]
+        notes = await self._rest_get(f"/projects/{project_id}/merge_requests/{mr_iid}/notes")
+        return notes if isinstance(notes, list) else []
 
     async def fetch_user_mrs(self, username: str) -> list[dict[str, Any]]:
         authored_query, authored_path = _q_user_merge_requests("authored")
@@ -489,7 +489,7 @@ class GitLabProfileClient:
         return results
 
     async def _fetch_user_issues_rest(self, username: str, role: str) -> list[dict[str, Any]]:
-        params = {"state": "all", "scope": "all"}
+        params = {"state": "all", "scope": "all", "order_by": "created_at"}
         if role == "authored":
             params["author_username"] = username
         else:
