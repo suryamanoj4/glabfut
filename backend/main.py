@@ -393,7 +393,7 @@ async def _fetch_user_data(client: GitLabProfileClient, username: str, profile: 
     events_task = client.fetch_user_events(username, user_id=user_id)
     projects_task = client.fetch_user_projects(username)
     mrs_task = client.fetch_user_mrs(username)
-    issues_task = client.fetch_user_issues(username)
+    issues_task = client.fetch_user_issues(username, user_id=user_id)
 
     results = await asyncio.gather(events_task, projects_task, mrs_task, issues_task, return_exceptions=True)
     events = results[0] if not isinstance(results[0], Exception) else []

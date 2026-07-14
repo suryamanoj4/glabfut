@@ -28,6 +28,8 @@ class QueryBuilderTests(unittest.TestCase):
         self.assertIn("$after", query)
         self.assertIn("$first", query)
         self.assertEqual(path, ["user", "contributedProjects"])
+        self.assertNotIn("repository", query)
+        self.assertNotIn("languages", query)
 
     def test_cursor_args_exist_for_merge_request_queries(self) -> None:
         query, path = _q_user_merge_requests("authored")
@@ -39,10 +41,41 @@ class QueryBuilderTests(unittest.TestCase):
         query, path = _q_user_issues("assigned")
         self.assertIn("$after", query)
         self.assertIn("$first", query)
-        self.assertEqual(path, ["user", "assignedIssues"])
+        self.assertEqual(path, ["issues"])
+        self.assertIn("assigneeUsernames", query)
+        self.assertIn("projectId", query)
+        self.assertNotIn("assignedIssues", query)
 
 
 class ClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_get_client_disables_safe_mode_compression(self) -> None:
+        from glabfut import client as client_module
+
+        original_client_class = client_module.Client
+
+        class FakeClient:
+            def __init__(self, url: str, token: str, **kwargs):
+                self.url = url
+                self.token = token
+                self.kwargs = kwargs
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+        client_module.Client = FakeClient
+        try:
+            client = GitLabProfileClient("https://gitlab.example.com", "token")
+            gl = await client._get_client()
+        finally:
+            client_module.Client = original_client_class
+
+        self.assertEqual(gl.url, "https://gitlab.example.com")
+        self.assertFalse(gl.kwargs["safe_mode"])
+        self.assertFalse(gl.kwargs["enable_compression"])
+
     async def test_fetch_user_events_uses_supplied_user_id(self) -> None:
         client = GitLabProfileClient("https://gitlab.example.com", "token")
         client.fetch_user_profile = AsyncMock(side_effect=AssertionError("profile should not be fetched"))
@@ -67,6 +100,55 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(projects), 2)
         self.assertEqual(client._gql_stream.await_count, 2)
+
+    async def test_fetch_user_issues_rest_uses_numeric_ids(self) -> None:
+        client = GitLabProfileClient("https://gitlab.example.com", "token")
+        client._rest_paginate = AsyncMock(
+            return_value=[
+                {"id": 10, "iid": 7, "project_id": 99, "state": "opened"},
+            ]
+        )
+
+        issues = await client._fetch_user_issues_rest(123, "authored")
+
+        self.assertEqual(issues[0]["project_id"], 99)
+        self.assertEqual(issues[0]["role"], "authored")
+        client._rest_paginate.assert_awaited_once_with("/issues", {"state": "all", "author_id": 123})
+
+    async def test_fetch_user_commit_stats_uses_rest_get_for_contributors(self) -> None:
+        client = GitLabProfileClient("https://gitlab.example.com", "token")
+        client._rest_get = AsyncMock(
+            return_value=[
+                {"name": "Alice Example", "email": "alice@example.com", "commits": 14},
+            ]
+        )
+        client._rest_paginate = AsyncMock(side_effect=AssertionError("contributors should not use paginate"))
+
+        stats = await client.fetch_user_commit_stats(
+            "alice",
+            {"username": "alice", "name": "Alice Example", "publicEmail": "alice@example.com"},
+            [{"id": 99, "_contributed": True}],
+            [],
+        )
+
+        self.assertEqual(stats["lifetime_commits"], 14)
+        self.assertEqual(stats["commits_to_others"], 14)
+        client._rest_get.assert_awaited_once_with("/projects/99/repository/contributors")
+
+    async def test_fetch_user_commit_stats_ignores_non_list_contributors(self) -> None:
+        client = GitLabProfileClient("https://gitlab.example.com", "token")
+        client._rest_get = AsyncMock(return_value={"error": "bad response"})
+
+        stats = await client.fetch_user_commit_stats(
+            "alice",
+            {"username": "alice"},
+            [{"id": 99, "_contributed": True}],
+            [],
+        )
+
+        self.assertEqual(stats["recent_commits"], 0)
+        self.assertEqual(stats["lifetime_commits"], 0)
+        self.assertEqual(stats["commits_to_others"], 0)
 
 
 class SignalsTests(unittest.TestCase):

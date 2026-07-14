@@ -105,6 +105,7 @@ def _normalize_issue(node: dict[str, Any], role: str) -> dict[str, Any]:
     project = issue.get("project") or {}
     issue["id"] = _parse_id(issue.get("id")) or issue.get("id")
     issue["project"] = _coerce_project(project) if isinstance(project, dict) else {}
+    issue["project_id"] = _parse_id(issue.get("projectId")) or issue.get("project_id")
     issue["role"] = role
     return issue
 
@@ -182,9 +183,6 @@ def _q_user_projects(role: str) -> tuple[str, list[str]]:
     project_node.field("fullPath")
     project_node.field("webUrl")
     project_node.field("starCount")
-    repo = project_node.field("repository")
-    repo_langs = repo.field("languages")
-    repo_langs.field("nodes", fields=["name", "share"])
     return q.build(), ["user", connection]
 
 
@@ -226,19 +224,14 @@ def _q_user_issues(role: str) -> tuple[str, list[str]]:
     q.arg("first", "$first", "Int")
     if role == "authored":
         issues = q.field("issues", args={"after": "$after", "first": "$first", "authorUsername": "$username", "state": "all"})
-        connection_path = ["issues"]
     else:
-        user = q.field("user", args={"username": "$username"})
-        issues = user.field("assignedIssues", args={"after": "$after", "first": "$first", "state": "all"})
-        connection_path = ["user", "assignedIssues"]
+        issues = q.field("issues", args={"after": "$after", "first": "$first", "assigneeUsernames": ["$username"], "state": "all"})
+    connection_path = ["issues"]
     issues.field("pageInfo", fields=["hasNextPage", "endCursor"])
     nodes = issues.field("nodes")
     for field_name in ("id", "iid", "title", "state", "webUrl", "createdAt", "closedAt"):
         nodes.field(field_name)
-    project = nodes.field("project")
-    project.field("id")
-    project.field("name")
-    project.field("fullPath")
+    nodes.field("projectId")
     return q.build(), connection_path
 
 
@@ -253,9 +246,9 @@ class GitLabProfileClient:
 
     async def _get_client(self) -> Client:
         if self._client is None:
-            self._client = Client(self._gitlab_url, self._token, safe_mode=True)
+            self._client = Client(self._gitlab_url, self._token, safe_mode=False, enable_compression=False)
             await self._client.__aenter__()
-            log.info("Client opened: url=%s safe_mode=True", self._gitlab_url)
+            log.info("Client opened: url=%s safe_mode=False compression=False", self._gitlab_url)
         return self._client
 
     async def _gql_exec(self, q: str, variables: dict[str, Any]) -> dict[str, Any] | None:
@@ -355,7 +348,7 @@ class GitLabProfileClient:
     async def _fetch_project_languages(self, project: dict[str, Any]) -> dict[str, Any]:
         project_id = project.get("id")
         if not project_id:
-            return []
+            return project
         repository = project.get("repository") or {}
         existing = repository.get("languages") if isinstance(repository, dict) else None
         if isinstance(existing, dict) and existing.get("nodes"):
@@ -488,30 +481,26 @@ class GitLabProfileClient:
         log.info("MRs: %s got %d via GraphQL/REST", username, len(results))
         return results
 
-    async def _fetch_user_issues_rest(self, username: str, role: str) -> list[dict[str, Any]]:
+    async def _fetch_user_issues_rest(self, user_id: int | str, role: str) -> list[dict[str, Any]]:
         params = {"state": "all"}
         if role == "authored":
-            params["author_username"] = username
+            params["author_id"] = user_id
         else:
-            params["assignee_username"] = username
+            params["assignee_id"] = user_id
         items = await self._rest_paginate("/issues", params)
         normalized: list[dict[str, Any]] = []
         for node in items:
-            project = {
-                "id": node.get("project_id"),
-                "fullPath": node.get("references", {}).get("full"),
-                "name": node.get("references", {}).get("full"),
-            }
             normalized.append(
                 {
                     **node,
-                    "project": _coerce_project(project),
+                    "project": {},
+                    "project_id": node.get("project_id"),
                     "role": role,
                 }
             )
         return normalized
 
-    async def fetch_user_issues(self, username: str) -> list[dict[str, Any]]:
+    async def fetch_user_issues(self, username: str, user_id: int | str | None = None) -> list[dict[str, Any]]:
         authored_query, authored_path = _q_user_issues("authored")
         assigned_query, assigned_path = _q_user_issues("assigned")
         authored_task = self._gql_stream(authored_query, authored_path, {"username": username})
@@ -524,12 +513,19 @@ class GitLabProfileClient:
         if assigned:
             items.extend(_normalize_issue(node, "assigned") for node in assigned)
         if not items:
-            authored_rest, assigned_rest = await asyncio.gather(
-                self._fetch_user_issues_rest(username, "authored"),
-                self._fetch_user_issues_rest(username, "assigned"),
-            )
-            items.extend(authored_rest)
-            items.extend(assigned_rest)
+            resolved_user_id = _parse_id(user_id) if user_id is not None else None
+            if resolved_user_id is None and user_id is not None:
+                resolved_user_id = user_id
+            if not resolved_user_id:
+                profile = await self.fetch_user_profile(username)
+                resolved_user_id = _parse_id((profile or {}).get("id"))
+            if resolved_user_id:
+                authored_rest, assigned_rest = await asyncio.gather(
+                    self._fetch_user_issues_rest(resolved_user_id, "authored"),
+                    self._fetch_user_issues_rest(resolved_user_id, "assigned"),
+                )
+                items.extend(authored_rest)
+                items.extend(assigned_rest)
 
         merged: dict[str, dict[str, Any]] = {}
         for item in items:
@@ -572,8 +568,8 @@ class GitLabProfileClient:
                 return False, None
             is_external = bool(project.get("_contributed")) and not bool(project.get("_member"))
             async with semaphore:
-                contributors = await self._rest_paginate(f"/projects/{project_id}/repository/contributors")
-            return is_external, contributors
+                contributors = await self._rest_get(f"/projects/{project_id}/repository/contributors")
+            return is_external, contributors if isinstance(contributors, list) else None
 
         if projects:
             contributor_results = await asyncio.gather(*(_fetch_project_contributors(project) for project in projects))
